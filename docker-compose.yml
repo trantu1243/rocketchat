@@ -1,0 +1,98 @@
+services:
+  mongo:
+    image: mongo:5.0
+    container_name: mongo
+    restart: unless-stopped
+    command: mongod --oplogSize 128 --replSet rs0
+    volumes:
+      - ./data/db:/data/db
+      - ./data/dump:/dump
+
+  mongo-init-replica:
+    image: mongo:5.0
+    container_name: mongo-init-replica
+    command: >
+      bash -c "for i in `seq 1 30`; do
+        mongo mongo/rocketchat --eval \"
+          rs.initiate({
+            _id: 'rs0',
+            members: [{ _id: 0, host: 'mongo:27017' }]
+          })
+        \" && break || sleep 1; done; exit 0"
+    depends_on:
+      - mongo
+
+  rocketchat:
+    image: rocketchat/rocket.chat:latest
+    container_name: rocketchat
+    restart: unless-stopped
+    environment:
+      MONGO_URL: "mongodb://mongo:27017/rocketchat?replicaSet=rs0"
+      MONGO_OPLOG_URL: "mongodb://mongo:27017/local?replicaSet=rs0"
+      ROOT_URL: "https://chat.tathanhan.vn"
+      PORT: 3000
+    depends_on:
+      - mongo
+      - mongo-init-replica
+    ports:
+      - "3000:3000"
+  jitsi-prosody:
+    image: jitsi/prosody:stable
+    container_name: jitsi-prosody
+    restart: unless-stopped
+    hostname: prosody
+    env_file:
+      - ./jitsi/.env
+    volumes:
+      - ./jitsi/config/prosody:/config:Z
+      - ./jitsi/transcripts:/usr/share/jitsi-meet/transcripts:Z
+    networks:
+      - default
+
+  jitsi-web:
+    image: jitsi/web:stable
+    container_name: jitsi-web
+    restart: unless-stopped
+    env_file:
+      - ./jitsi/.env
+    depends_on:
+      - jitsi-prosody
+    volumes:
+      - ./jitsi/config/web:/config:Z
+      - ./jitsi/web/letsencrypt:/etc/letsencrypt:Z
+    networks:
+      - default
+
+  jitsi-jicofo:
+    image: jitsi/jicofo:stable
+    container_name: jitsi-jicofo
+    restart: unless-stopped
+    env_file:
+      - ./jitsi/.env
+    depends_on:
+      - jitsi-prosody
+    networks:
+      - default
+
+  jitsi-jvb:
+    image: jitsi/jvb:stable
+    container_name: jitsi-jvb
+    restart: unless-stopped
+    env_file:
+      - ./jitsi/.env
+    ports:
+      - "10000:10000/udp"   # BẮT BUỘC cho media
+      # - "4443:4443/tcp"   # (tuỳ chọn) fallback TCP
+    networks:
+      - default
+  nginx:
+    image: nginx:alpine
+    container_name: nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d
+      - ./nginx/certs:/etc/nginx/certs
+      - ./nginx/logs:/var/log/nginx
