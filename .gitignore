@@ -1,1 +1,4 @@
-conf.d/certs
+nginx/certs
+nginx/logs
+
+data
